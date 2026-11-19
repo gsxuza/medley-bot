@@ -6,7 +6,9 @@ Funciona com dois provedores, escolhidos pela variável LLM_PROVIDER no .env:
 Se LLM_PROVIDER estiver vazio, usa o provedor cuja chave estiver preenchida.
 """
 import functools
+import logging
 import os
+import re
 
 from dotenv import load_dotenv
 
@@ -14,6 +16,7 @@ from .plan import AgentResponse
 from .session import MAX_HISTORY, Session
 
 load_dotenv()
+log = logging.getLogger("medley")
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL") or "claude-opus-5-5"
 # Alias do Google que sempre aponta para o Gemini Flash mais recente
@@ -65,15 +68,17 @@ def provider() -> str:
 
 
 def model_name() -> str:
-    return GEMINI_MODEL if provider() == "gemini" else CLAUDE_MODEL
+    return (_gemini_model or GEMINI_MODEL) if provider() == "gemini" else CLAUDE_MODEL
 
 
 @functools.lru_cache(maxsize=1)
 def _client():
     if provider() == "gemini":
         from google import genai
+        from google.genai import types
 
-        return genai.Client()  # lê GEMINI_API_KEY (ou GOOGLE_API_KEY)
+        # v1beta: é onde ficam os apelidos (gemini-flash-latest) e a saída estruturada completa
+        return genai.Client(http_options=types.HttpOptions(api_version="v1beta"))
     import anthropic
 
     return anthropic.Anthropic()
@@ -110,23 +115,53 @@ def _respond_claude(messages: list[dict]) -> AgentResponse:
     return response.parsed_output
 
 
+_gemini_model: str | None = None
+
+
+def _discover_gemini_model() -> str:
+    """Escolhe o modelo Flash mais recente disponível para esta chave."""
+    names = []
+    for m in _client().models.list():
+        name = (m.name or "").removeprefix("models/")
+        actions = m.supported_actions or []
+        if "flash" in name and "generateContent" in actions and not any(
+            x in name for x in ("lite", "image", "tts", "audio", "live", "thinking", "exp")
+        ):
+            names.append(name)
+    if not names:
+        raise AgentError("nenhum modelo Gemini Flash disponível para esta chave")
+
+    def version(n: str) -> tuple:
+        nums = re.findall(r"\d+(?:\.\d+)?", n)
+        return (float(nums[0]) if nums else 0.0, "preview" not in n, n)
+
+    return max(names, key=version)
+
+
 def _respond_gemini(messages: list[dict]) -> AgentResponse:
+    global _gemini_model
     from google.genai import errors, types
 
     contents = [
         types.Content(role="model" if m["role"] == "assistant" else "user", parts=[types.Part(text=m["content"])])
         for m in messages
     ]
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM,
+        response_mime_type="application/json",
+        response_schema=AgentResponse,
+    )
+    model = _gemini_model or GEMINI_MODEL
     try:
-        response = _client().models.generate_content(
-            model=GEMINI_MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM,
-                response_mime_type="application/json",
-                response_schema=AgentResponse,
-            ),
-        )
+        try:
+            response = _client().models.generate_content(model=model, contents=contents, config=config)
+        except errors.ClientError as e:
+            if e.code != 404:
+                raise
+            # Modelo não existe (nomes mudam com o tempo): descobre um disponível e tenta de novo
+            _gemini_model = _discover_gemini_model()
+            log.warning("modelo %s não encontrado; usando %s", model, _gemini_model)
+            response = _client().models.generate_content(model=_gemini_model, contents=contents, config=config)
     except errors.ClientError as e:
         if e.code == 429:
             raise AgentError("limite gratuito do Gemini atingido; espere um pouco e tente de novo") from e
