@@ -8,18 +8,32 @@ import numpy as np
 import soundfile as sf
 
 from .audio import SR, TrackInfo, ffmpeg, fmt_time, has_rubberband, load
+from .lyrics import line_near
 from .plan import Plan
 
 TARGET_RMS_DB = -16.0   # volume médio que todos os trechos passam a ter
 MICRO_FADE = 0.015      # evita estalo nos cortes secos
 
 
-def _snap(t: float, beats: list[float], max_dist: float = 0.6) -> float:
-    if not beats:
+def _nearest(t: float, points: list[float], max_dist: float) -> float | None:
+    if not points:
+        return None
+    p = np.asarray(points)
+    best = float(p[np.argmin(np.abs(p - t))])
+    return best if abs(best - t) <= max_dist else None
+
+
+def _snap(t: float, tr: TrackInfo, mode: str) -> float:
+    """Ajusta t para o começo da contagem de 8 (ou batida) mais próxima, se estiver perto."""
+    if mode == "none":
         return t
-    b = np.asarray(beats)
-    nearest = float(b[np.argmin(np.abs(b - t))])
-    return nearest if abs(nearest - t) <= max_dist else t
+    beat = 60 / tr.bpm if tr.bpm > 0 else 0.5
+    if mode == "phrase":
+        p = _nearest(t, tr.phrases, max_dist=max(1.5 * beat, 0.8))
+        if p is not None:
+            return p
+    b = _nearest(t, tr.beats, max_dist=0.6)
+    return t if b is None else b
 
 
 def _active_rms_db(x: np.ndarray) -> float:
@@ -86,9 +100,10 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
 
         start = max(0.0, min(seg.start, tr.duration))
         end = max(start, min(seg.end, tr.duration))
-        if plan.snap_to_beat:
-            start = _snap(start, tr.beats) if start > 0.5 else start
-            end = _snap(end, tr.beats) if end < tr.duration - 0.5 else end
+        if start > 0.5:
+            start = _snap(start, tr, plan.snap)
+        if end < tr.duration - 0.5:
+            end = _snap(end, tr, plan.snap)
         if end - start < 0.5:
             raise ValueError(f"Trecho {i + 1} ({seg.track}) ficou curto demais: {start:.1f}s a {end:.1f}s.")
 
@@ -129,6 +144,7 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             "src_start": start, "src_end": end, "out_start": pos,
             "transition": trans if i > 0 else "início",
             "semitones": seg.semitones,
+            "lyric": line_near(tr.lyrics, start),
         })
 
     n = min(int(plan.fade_out * SR), len(out))
@@ -169,5 +185,6 @@ def describe(timeline: list[dict]) -> str:
             f"{fmt_time(item['out_start'])} ▸ {item['track']} \"{item['title']}\" "
             f"({fmt_time(item['src_start'])}–{fmt_time(item['src_end'])}) [{item['transition']}]"
             + (f" [tom {item['semitones']:+d}]" if item.get("semitones") else "")
+            + (f"\n    ♪ \"{item['lyric'][:60]}\"" if item.get("lyric") else "")
         )
     return "\n".join(lines)

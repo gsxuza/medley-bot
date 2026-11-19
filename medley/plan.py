@@ -5,7 +5,7 @@ Os mesmos modelos servem de schema para a saída estruturada da API.
 """
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Segment(BaseModel):
@@ -32,10 +32,23 @@ class Plan(BaseModel):
     segments: list[Segment]
     fade_in: float = Field(description="Fade-in no começo do medley, em segundos")
     fade_out: float = Field(description="Fade-out no final do medley, em segundos")
-    snap_to_beat: bool = Field(
-        description="Ajustar início e fim de cada trecho para a batida mais próxima (recomendado)"
+    snap: Literal["phrase", "beat", "none"] = Field(
+        description=(
+            "Como ajustar o início e o fim de cada trecho: 'phrase' = no começo da contagem de 8 "
+            "mais próxima (recomendado para dança), 'beat' = na batida mais próxima, 'none' = tempo exato"
+        )
     )
     speed: float = Field(description="Velocidade final sem mudar o tom (1.0 = normal, 0.85 = 85% para ensaio)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate(cls, data):
+        """Planos antigos tinham snap_to_beat (true/false)."""
+        if isinstance(data, dict) and "snap_to_beat" in data and "snap" not in data:
+            old = data["snap_to_beat"]
+            data = {k: v for k, v in data.items() if k != "snap_to_beat"}
+            data["snap"] = "beat" if old else "none"
+        return data
 
 
 class AgentResponse(BaseModel):

@@ -6,6 +6,7 @@ import os
 import shutil
 import time
 import subprocess
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import numpy as np
 import soundfile as sf
 
 SR = 44100
+log = logging.getLogger("medley")
 
 # Perfis de Krumhansl-Schmuckler para estimar a tonalidade
 _MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
@@ -32,6 +34,10 @@ class TrackInfo:
     beats: list[float] = field(default_factory=list)
     energy: list[int] = field(default_factory=list)   # 0-9 a cada ENERGY_STEP segundos
     chapters: list[dict] = field(default_factory=list)
+    phrases: list[float] = field(default_factory=list)  # onde começa cada contagem de 8 ("1")
+    lyrics: list[dict] = field(default_factory=list)    # [{"t": segundos, "text": frase}]
+    lyrics_checked: bool = False                        # já tentou buscar a legenda
+    analysis_version: int = 1
 
     def summary(self) -> str:
         """Texto compacto que o agente recebe sobre a faixa."""
@@ -47,10 +53,23 @@ class TrackInfo:
                 f"  energia (0-9) a cada {ENERGY_STEP}s, começando em 0:00: "
                 + "".join(str(e) for e in self.energy)
             )
+        if self.phrases:
+            lines.append(
+                "  contagens de 8 (o '1' da contagem da dança) começam em: "
+                + ", ".join(fmt_time(p) for p in self.phrases)
+            )
+        if self.lyrics:
+            from .lyrics import describe
+
+            lines.append("  letra com horários (legenda do YouTube; ↻ = frase que se repete, provável refrão):")
+            lines.append(describe(self.lyrics))
+        else:
+            lines.append("  letra: não disponível para esta faixa")
         return "\n".join(lines)
 
 
 ENERGY_STEP = 5
+ANALYSIS_VERSION = 2  # mude quando a análise mudar, para refazer as análises em cache
 
 
 @functools.lru_cache(maxsize=1)
@@ -107,7 +126,17 @@ def download_youtube(url: str, cache_dir: Path) -> tuple[Path, dict]:
             raw = Path(ydl.prepare_filename(info))
             _to_wav(raw, wav)
             raw.unlink(missing_ok=True)
+
+    from .lyrics import fetch
+
+    try:
+        lyrics, checked = fetch(url, info, cache_dir, opts)
+    except Exception as e:  # a legenda é um extra: nunca impede o medley
+        log.warning("erro lendo a legenda: %s", e)
+        lyrics, checked = [], False
     meta = {
+        "lyrics": lyrics,
+        "lyrics_checked": checked,
         "title": info.get("title") or url,
         "chapters": [
             {"start": float(c["start_time"]), "title": c.get("title", "")}
@@ -141,13 +170,19 @@ def load(wav: str | Path) -> np.ndarray:
 def analyze(track_id: str, source: str, wav: Path, meta: dict) -> TrackInfo:
     """BPM, batidas, tom e curva de energia. Resultado fica em cache ao lado do WAV."""
     cache = wav.with_suffix(".analysis.json")
-    if cache.exists():
-        d = json.loads(cache.read_text(encoding="utf-8"))
-    else:
+    d = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
+    if d.get("analysis_version") != ANALYSIS_VERSION:
         import librosa
 
         y, sr = librosa.load(str(wav), sr=22050, mono=True)
-        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        tempo = float(np.atleast_1d(librosa.feature.tempo(onset_envelope=onset_env, sr=sr))[0])
+        # O detector às vezes acha metade/o dobro do andamento; músicas de dança ficam entre 60 e 190 BPM
+        while 0 < tempo < 60:
+            tempo *= 2
+        while tempo > 190:
+            tempo /= 2
+        tempo, beat_frames = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, bpm=tempo)
         beats = librosa.frames_to_time(beat_frames, sr=sr)
 
         chroma = librosa.feature.chroma_stft(y=y, sr=sr).mean(axis=1)
@@ -172,13 +207,58 @@ def analyze(track_id: str, source: str, wav: Path, meta: dict) -> TrackInfo:
             "key": best[1],
             "beats": [round(float(b), 3) for b in beats],
             "energy": energy.tolist(),
+            "phrases": [round(float(beats[i]), 3) for i in _phrase_starts(y, sr, beat_frames)],
+            "analysis_version": ANALYSIS_VERSION,
         }
         cache.write_text(json.dumps(d), encoding="utf-8")
 
     return TrackInfo(
         id=track_id, source=source, title=meta["title"], wav=str(wav),
-        chapters=meta.get("chapters", []), **d,
+        chapters=meta.get("chapters", []), lyrics=meta.get("lyrics", []),
+        lyrics_checked=meta.get("lyrics_checked", True), **d,
     )
+
+
+def _zscore(x: np.ndarray) -> np.ndarray:
+    return (x - x.mean()) / (x.std() + 1e-9)
+
+
+def _phrase_starts(y: np.ndarray, sr: int, beat_frames: np.ndarray) -> list[int]:
+    """Índices das batidas que são o "1" de cada contagem de 8.
+
+    Ideia: em música, o começo de cada compasso (4 tempos) costuma ter troca de acorde e
+    batida mais forte (bumbo, prato). Testa as 4 posições possíveis do compasso e fica com a
+    que tem mais trocas de acorde e acentos; depois decide entre as 2 metades da contagem de 8.
+    """
+    import librosa
+
+    n = len(beat_frames)
+    if n < 16:
+        return []
+    hop = 512
+    S = np.abs(librosa.stft(y, n_fft=2048, hop_length=hop))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
+    low = S[freqs < 150].sum(axis=0)                       # bumbo / baixo
+    high = S[freqs > 5000].sum(axis=0)                     # pratos
+    onset = librosa.onset.onset_strength(S=librosa.amplitude_to_db(S), sr=sr)
+    chroma = librosa.feature.chroma_stft(S=S ** 2, sr=sr)  # acordes
+
+    frames = np.append(beat_frames, S.shape[1])
+    seg = np.stack([chroma[:, frames[i]:max(frames[i + 1], frames[i] + 1)].mean(axis=1) for i in range(n)])
+    seg /= np.linalg.norm(seg, axis=1, keepdims=True) + 1e-9
+    change = np.r_[0.0, 1 - np.sum(seg[1:] * seg[:-1], axis=1)]  # quanto o acorde mudou nesta batida
+
+    def at(curve: np.ndarray) -> np.ndarray:
+        return np.array([curve[max(0, f - 2):f + 3].max() for f in beat_frames])
+
+    accent = _zscore(at(onset)) + _zscore(at(low))
+    score = _zscore(change) + 0.5 * accent
+    bar = int(np.argmax([score[k::4].mean() for k in range(4)]))
+    # Os acordes trocam igual nas duas metades da contagem de 8; o que marca o "1" são os acentos
+    # (prato, bumbo mais forte, viradas de bateria terminando).
+    half_score = accent + 2 * _zscore(at(high))
+    half = max((bar, bar + 4), key=lambda k: half_score[k::8].mean() if k < n else -np.inf)
+    return list(range(half % 8, n, 8))
 
 
 def track_to_dict(t: TrackInfo) -> dict:

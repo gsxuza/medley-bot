@@ -69,14 +69,15 @@ python -m medley.cli render plano.json musica1.mp3 musica2.mp3 -o medley.mp3
     {"track": "T2", "start": 62, "end": 180, "transition": "crossfade", "transition_seconds": 3,
      "gap_before": 0, "semitones": 1, "volume_db": 0}
   ],
-  "fade_in": 0, "fade_out": 3, "snap_to_beat": true, "speed": 1.0
+  "fade_in": 0, "fade_out": 3, "snap": "phrase", "speed": 1.0
 }
 ```
 
 - `start`/`end`: segundos na música original. O crossfade acontece nos últimos N segundos de
   um trecho e nos primeiros N do seguinte.
 - `transition`: `crossfade` (sobrepõe), `cut` (corte seco) ou `fade` (abaixa, depois entra a próxima).
-- `snap_to_beat`: ajusta cortes para a batida mais próxima (até 0,6 s de distância).
+- `snap`: `phrase` ajusta cada corte para o começo da contagem de 8 mais próxima (o "1" da dança);
+  `beat`, para a batida mais próxima; `none` usa o tempo exato.
 - `semitones`: muda o tom. Usa o filtro rubberband do ffmpeg se existir; se não, o librosa (qualidade menor).
 - `speed`: 0.85 = 85% da velocidade, sem mudar o tom (bom para ensaio).
 
@@ -147,10 +148,26 @@ da mais simples para a mais trabalhosa:
 | `Dockerfile`, `docker-compose.yml` | imagem e execução no servidor |
 | `deploy/instalar-servidor.sh` | instalação num servidor Ubuntu/Debian |
 
+## O que a IA sabe sobre cada música
+
+A IA não ouve o áudio. Antes de cada pedido ela recebe, de cada música:
+
+- duração, andamento (BPM) e tom estimado;
+- onde começa cada contagem de 8 (detectada pelas trocas de acorde, bumbo e pratos);
+- a **letra com horários**, tirada da legenda do YouTube (manual ou automática), com as frases
+  repetidas marcadas como provável refrão;
+- os capítulos do vídeo, quando existem, e uma curva de energia (partes mais fortes ou mais fracas).
+
+Com isso, pedidos como "começa no refrão" ou "corta depois de 'ressuscita-me'" caem no lugar
+certo, e a linha do tempo mostra a frase com que cada trecho começa.
+
 ## Limitações conhecidas
 
-- A IA não ouve a música: quando ela fala "no refrão" sem dar o tempo, o bot estima pela
-  curva de energia e diz o tempo que escolheu. Com minutos e segundos o resultado é exato.
+- Nem todo vídeo tem legenda. Sem ela, o bot estima as partes da música pela curva de energia,
+  que é menos preciso. Legendas automáticas também podem errar palavras ou estar um pouco
+  adiantadas.
+- A contagem de 8 é estimada. Em músicas sem bateria marcada (só voz e piano, por exemplo)
+  ela pode cair na metade errada da contagem.
 - Crossfade entre músicas com BPMs muito diferentes pode embolar. Nesses casos o bot prefere
   transições curtas ou fade.
 - O YouTube às vezes bloqueia downloads (principalmente de servidores na nuvem). Veja

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .audio import TrackInfo, analyze, download_youtube, import_file, track_to_dict
+from .audio import ANALYSIS_VERSION, TrackInfo, analyze, download_youtube, import_file, track_to_dict
 from .plan import Plan
 
 URL_RE = re.compile(r"https?://(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)/\S+")
@@ -69,18 +69,24 @@ class Session:
         self.tracks[t.id] = t
         return t
 
-    def restore_missing(self, cache_dir: Path) -> list[str]:
-        """Rebaixa faixas cujo áudio foi apagado pela limpeza automática."""
+    def refresh_tracks(self, cache_dir: Path) -> list[str]:
+        """Rebaixa áudios apagados pela limpeza e atualiza análises antigas (ex.: sem letra/contagem de 8)."""
         notes = []
         for tid, t in list(self.tracks.items()):
-            if Path(t.wav).exists():
+            is_url = bool(URL_RE.fullmatch(t.source))
+            missing = not Path(t.wav).exists()
+            outdated = t.analysis_version < ANALYSIS_VERSION or (is_url and not t.lyrics_checked)
+            if not (missing or outdated):
                 continue
-            if URL_RE.fullmatch(t.source):
+            if is_url:
                 wav, meta = download_youtube(t.source, cache_dir)
                 self.tracks[tid] = analyze(tid, t.source, wav, meta)
-            else:
+            elif missing:
                 del self.tracks[tid]
                 notes.append(f"[o áudio da faixa {tid} ({t.title}) expirou; peça para enviar o arquivo de novo]")
+            else:
+                meta = {"title": t.title, "chapters": t.chapters, "lyrics": t.lyrics}
+                self.tracks[tid] = analyze(tid, t.source, Path(t.wav), meta)
         return notes
 
     def state_text(self) -> str:
