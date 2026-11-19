@@ -2,7 +2,10 @@
 import asyncio
 import logging
 import os
+import shutil
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import anthropic
@@ -11,6 +14,7 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+from .audio import cleanup, has_rubberband
 from .core import handle
 from .session import Session
 
@@ -100,8 +104,34 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 )
 
 
+def _startup_checks() -> None:
+    for tool in ("ffmpeg",):
+        if not shutil.which(tool):
+            raise SystemExit(f"{tool} não encontrado. Instale o ffmpeg.")
+    if not shutil.which("deno"):
+        log.warning("deno não encontrado: o yt-dlp pode falhar em alguns vídeos do YouTube.")
+    if not ALLOWED:
+        log.warning("ALLOWED_USER_IDS vazio: qualquer pessoa que achar o bot pode usá-lo.")
+    if not has_rubberband():
+        log.warning("ffmpeg sem rubberband: mudança de tom vai usar o librosa (qualidade menor).")
+
+
+def _cleanup_loop() -> None:
+    keep_days = float(os.getenv("KEEP_DAYS", "30"))
+    while True:
+        try:
+            n = cleanup(DATA_DIR, keep_days)
+            if n:
+                log.info("limpeza: %d arquivos antigos apagados", n)
+        except Exception:
+            log.exception("erro na limpeza")
+        time.sleep(6 * 3600)
+
+
 def main() -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
+    _startup_checks()
+    threading.Thread(target=_cleanup_loop, daemon=True).start()
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler(["start", "ajuda"], start))
     app.add_handler(CommandHandler("novo", novo))

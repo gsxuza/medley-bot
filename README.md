@@ -74,6 +74,59 @@ python -m medley.cli render plano.json musica1.mp3 musica2.mp3 -o medley.mp3
 - `semitones`: muda o tom. Usa o filtro rubberband do ffmpeg se existir; se não, o librosa (qualidade menor).
 - `speed`: 0.85 = 85% da velocidade, sem mudar o tom (bom para ensaio).
 
+## Rodar no servidor
+
+O bot usa *polling* (ele busca as mensagens no Telegram), então o servidor **não precisa de
+domínio, HTTPS nem porta aberta**. Basta uma máquina Linux ligada com internet.
+
+**Servidor recomendado:** VPS com Ubuntu 24.04, **2 GB de RAM** e 20 GB de disco (o processamento
+carrega as músicas na memória). Qualquer provedor serve: Hetzner, DigitalOcean, Hostinger,
+Magalu Cloud, Oracle Cloud (tem plano gratuito) etc.
+
+### Instalação
+
+No servidor (via SSH), clone o projeto. Como o repositório é privado, o `git clone` vai pedir
+seu usuário do GitHub e, no lugar da senha, um token criado em
+https://github.com/settings/tokens (com acesso de leitura ao repositório):
+
+```bash
+git clone https://github.com/gsxuza/medley-bot && cd medley-bot
+```
+
+```bash
+bash deploy/instalar-servidor.sh
+```
+
+Na primeira vez o script instala o Docker e cria o `.env`. Preencha as chaves
+(`nano .env`) e rode o script de novo para subir o bot.
+
+### Dia a dia
+
+| Para... | Comando (na pasta do projeto) |
+|---|---|
+| ver os logs | `docker compose logs -f` |
+| reiniciar | `docker compose restart` |
+| parar | `docker compose down` |
+| atualizar o código | `git pull && docker compose up -d --build` |
+
+- O bot volta sozinho se o servidor reiniciar (`restart: unless-stopped`).
+- O `yt-dlp` é atualizado toda vez que o container inicia, porque o YouTube muda com frequência.
+  Se downloads começarem a falhar, um `docker compose restart` costuma resolver.
+- Conversas, áudios e medleys ficam em `data/`. Arquivos sem uso há mais de `KEEP_DAYS` dias
+  (padrão 30) são apagados; se ela voltar numa conversa antiga, o bot baixa as músicas de novo.
+
+### Se o YouTube bloquear o servidor
+
+O YouTube às vezes bloqueia IPs de datacenter ("Sign in to confirm you're not a bot"). Opções,
+da mais simples para a mais trabalhosa:
+
+1. Ela manda o arquivo de áudio direto no chat (sempre funciona).
+2. Cookies: no seu navegador, com uma conta Google **secundária** logada no YouTube, exporte os
+   cookies com a extensão "Get cookies.txt LOCALLY", salve como `data/cookies.txt` no servidor e
+   coloque `YTDLP_COOKIES=/app/data/cookies.txt` no `.env`. Não use sua conta principal, porque
+   o Google pode bloquear contas usadas assim.
+3. Rodar o bot em casa (um PC antigo ou mini PC), que usa IP residencial.
+
 ## Arquivos
 
 | Arquivo | O que faz |
@@ -85,6 +138,8 @@ python -m medley.cli render plano.json musica1.mp3 musica2.mp3 -o medley.mp3
 | `medley/session.py` | estado de cada conversa (salvo em `data/chats/`) |
 | `medley/core.py` | fluxo de uma mensagem |
 | `medley/bot.py` / `medley/cli.py` | Telegram / terminal |
+| `Dockerfile`, `docker-compose.yml` | imagem e execução no servidor |
+| `deploy/instalar-servidor.sh` | instalação num servidor Ubuntu/Debian |
 
 ## Limitações conhecidas
 
@@ -92,6 +147,6 @@ python -m medley.cli render plano.json musica1.mp3 musica2.mp3 -o medley.mp3
   curva de energia e diz o tempo que escolheu. Com minutos e segundos o resultado é exato.
 - Crossfade entre músicas com BPMs muito diferentes pode embolar. Nesses casos o bot prefere
   transições curtas ou fade.
-- O YouTube às vezes bloqueia downloads (principalmente de servidores na nuvem). Mantenha o
-  `yt-dlp` atualizado (`pip install -U yt-dlp`) ou mande o arquivo de áudio direto no chat.
+- O YouTube às vezes bloqueia downloads (principalmente de servidores na nuvem). Veja
+  "Se o YouTube bloquear o servidor" acima.
 - Bots do Telegram só baixam arquivos de até 20 MB.

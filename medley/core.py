@@ -26,6 +26,12 @@ def handle(
 ) -> Result:
     cache = data_dir / "cache"
     notes = []
+    if any(not Path(t.wav).exists() for t in session.tracks.values()):
+        progress("Recuperando as músicas desta conversa…")
+        try:
+            notes += session.restore_missing(cache)
+        except Exception as e:
+            notes.append(f"[não consegui recuperar uma das músicas antigas: {e}]")
 
     for url in URL_RE.findall(text):
         progress("Baixando e analisando a música…")

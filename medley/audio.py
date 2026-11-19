@@ -1,7 +1,9 @@
 """Download, conversão e análise das músicas."""
 import hashlib
 import json
+import os
 import shutil
+import time
 import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -75,6 +77,11 @@ def download_youtube(url: str, cache_dir: Path) -> tuple[Path, dict]:
         "quiet": True,
         "no_warnings": True,
     }
+    # Em servidores, o YouTube às vezes exige login ("confirme que você não é um robô").
+    # Exporte os cookies do navegador para um arquivo e aponte YTDLP_COOKIES para ele.
+    cookies = os.getenv("YTDLP_COOKIES")
+    if cookies and Path(cookies).is_file():
+        opts["cookiefile"] = cookies
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
         wav = cache_dir / f"{info['id']}.wav"
@@ -105,6 +112,7 @@ def import_file(path: Path, cache_dir: Path, title: str | None = None) -> tuple[
 
 def load(wav: str | Path) -> np.ndarray:
     """Retorna áudio float32 com shape (amostras, 2)."""
+    os.utime(wav)  # marca como usado, para a limpeza automática não apagar
     data, sr = sf.read(str(wav), dtype="float32", always_2d=True)
     if sr != SR:
         raise ValueError(f"{wav}: esperado {SR} Hz, veio {sr}")
@@ -158,6 +166,21 @@ def analyze(track_id: str, source: str, wav: Path, meta: dict) -> TrackInfo:
 
 def track_to_dict(t: TrackInfo) -> dict:
     return asdict(t)
+
+
+def cleanup(data_dir: Path, keep_days: float) -> int:
+    """Apaga áudios baixados e medleys gerados que não são usados há mais de keep_days dias."""
+    if keep_days <= 0:
+        return 0
+    limit = time.time() - keep_days * 86400
+    removed = 0
+    for sub in ("cache", "out"):
+        for f in (data_dir / sub).glob("*"):
+            # atime nem sempre é atualizado; mtime + uso recente via touch em load()
+            if f.is_file() and f.stat().st_mtime < limit:
+                f.unlink(missing_ok=True)
+                removed += 1
+    return removed
 
 
 def has_rubberband() -> bool:

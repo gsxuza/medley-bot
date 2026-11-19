@@ -64,6 +64,20 @@ class Session:
         self.tracks[t.id] = t
         return t
 
+    def restore_missing(self, cache_dir: Path) -> list[str]:
+        """Rebaixa faixas cujo áudio foi apagado pela limpeza automática."""
+        notes = []
+        for tid, t in list(self.tracks.items()):
+            if Path(t.wav).exists():
+                continue
+            if URL_RE.fullmatch(t.source):
+                wav, meta = download_youtube(t.source, cache_dir)
+                self.tracks[tid] = analyze(tid, t.source, wav, meta)
+            else:
+                del self.tracks[tid]
+                notes.append(f"[o áudio da faixa {tid} ({t.title}) expirou; peça para enviar o arquivo de novo]")
+        return notes
+
     def state_text(self) -> str:
         parts = ["FAIXAS DISPONÍVEIS:"]
         parts += [t.summary() for t in self.tracks.values()] or ["(nenhuma ainda)"]

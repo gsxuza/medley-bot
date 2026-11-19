@@ -1,6 +1,7 @@
 anthropic>=2.10
 pydantic>=2.7
-yt-dlp
+yt-dlp[default]
+deno
 librosa>=0.10
 soundfile
 numpy
