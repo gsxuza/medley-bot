@@ -93,6 +93,23 @@ python -m medley.cli render plano.json musica1.mp3 musica2.mp3 -o medley.mp3
 - `semitones`: muda o tom. Usa o filtro rubberband do ffmpeg se existir; se não, o librosa (qualidade menor).
 - `speed`: 0.85 = 85% da velocidade, sem mudar o tom (bom para ensaio).
 
+## Separar voz e instrumentos (opcional)
+
+Com o [Demucs](https://github.com/adefossez/demucs) instalado, ela pode pedir coisas como "nessa
+parte deixa só o instrumental", "só a voz no começo" ou "só a bateria na transição". Para instalar
+(no ambiente do projeto):
+
+```bash
+pip install -r requirements-separacao.txt
+```
+
+- Instala o PyTorch (~200 MB no Windows). No primeiro uso, o modelo (~80 MB) é baixado.
+- Separar uma música leva de 1 a alguns minutos no processador. O resultado fica guardado
+  em `data/cache`, então cada música só é separada uma vez; o bot mostra a porcentagem.
+- A separação é estimada por IA: às vezes sobra um pouco de voz no instrumental.
+- Sem o Demucs instalado, o bot funciona normalmente e explica que essa função não está disponível.
+- No Docker: `SEPARACAO=1 docker compose up -d --build` (imagem ~1 GB maior).
+
 ## Rodar no servidor
 
 O bot usa *polling* (ele busca as mensagens no Telegram), então o servidor **não precisa de

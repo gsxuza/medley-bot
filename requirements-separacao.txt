@@ -1,0 +1,4 @@
+# Opcional: separar voz e instrumentos ("só o instrumental", "só a voz"...).
+# Instala o Demucs e o PyTorch (~200 MB no Windows; o modelo, ~80 MB, é baixado no primeiro uso).
+#   pip install -r requirements-separacao.txt
+demucs==4.1.0

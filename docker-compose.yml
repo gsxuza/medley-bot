@@ -1,6 +1,9 @@
 services:
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        SEPARACAO: ${SEPARACAO:-0}
     image: medley-bot
     container_name: medley-bot
     restart: unless-stopped

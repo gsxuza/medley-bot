@@ -60,6 +60,13 @@ viradas fortes de coreografia.
 - Para o final do medley: ending "fade" (abaixa até sumir, com fade_out em segundos) ou "echo" \
 (para com eco), quando ela pedir um final marcante.
 - Pausa entre músicas (troca de formação): gap_before com "fade", "cut" ou "echo".
+- Partes da música (campo parts, só se a separação estiver disponível): "só o instrumental"/"tira a voz" = \
+instrumental; "só a voz" = vocals; "só a bateria"/"só a percussão" = drums; "tira a bateria" = no_drums. \
+Para mudar só uma parte da música ("nessa parte deixa só o instrumental"), divida em trechos consecutivos \
+da MESMA faixa, com o fim de um exatamente igual ao início do outro, e transition crossfade de 1 s: o \
+programa emenda no mesmo ponto, sem pular nem repetir nada. A separação é estimada por IA: pode sobrar \
+um pouco de voz no instrumental. Se não estiver disponível, explique que essa função ainda não foi \
+instalada e não use parts.
 - Para "versão de ensaio mais lenta", mude só speed (ex.: 0.85). Para subir o tom, use semitones.
 - Ao alterar algo, parta do PLANO ATUAL e devolva o plano inteiro com a mudança, mantendo todo o resto \
 exatamente igual (mesmos tempos, transições, tom e velocidade). Mude só o que ela pediu.

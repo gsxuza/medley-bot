@@ -28,6 +28,14 @@ class Segment(BaseModel):
     gap_before: float = Field(description="Silêncio antes deste trecho, em segundos (0 = nenhum)")
     semitones: int = Field(description="Transposição de tom em semitons (0 = original, 1 = meio tom acima)")
     volume_db: float = Field(description="Ajuste de volume em dB depois da equalização automática (0 = nenhum)")
+    parts: Literal["full", "instrumental", "vocals", "drums", "no_drums"] = Field(
+        default="full",
+        description=(
+            "Que partes da música tocam neste trecho: full = música original; instrumental = sem a voz; "
+            "vocals = só a voz; drums = só a bateria; no_drums = sem a bateria. "
+            "Diferente de 'full' só funciona se a separação estiver disponível."
+        ),
+    )
 
 
 class Plan(BaseModel):

@@ -8,6 +8,7 @@ import numpy as np
 import soundfile as sf
 
 from .audio import SR, TrackInfo, ffmpeg, fmt_time, has_rubberband, load
+from . import stems
 from .lyrics import line_near
 from .plan import Plan
 
@@ -158,7 +159,14 @@ def _beats_in(tr: TrackInfo, start: float, end: float) -> list[float]:
     return [b - start for b in tr.beats if start - 0.05 <= b <= end]
 
 
-def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict]:
+def _linear_mix(tail: np.ndarray, head: np.ndarray) -> np.ndarray:
+    """Mistura para trechos da MESMA música no mesmo ponto (ex.: tirar a voz): os sinais são parecidos,
+    então a curva linear mantém o volume constante (a de potência constante daria um "calombo")."""
+    t = np.linspace(0, 1, len(tail), dtype=np.float32)[:, None]
+    return tail * (1 - t) + head * t
+
+
+def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path, progress=lambda msg: None) -> list[dict]:
     """Gera o MP3 e retorna a linha do tempo (para mostrar à usuária)."""
     if not plan.segments:
         raise ValueError("O plano não tem nenhum trecho.")
@@ -171,9 +179,10 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
         tr = tracks.get(seg.track)
         if tr is None:
             raise ValueError(f"Faixa {seg.track} não existe.")
-        if seg.track not in audio_cache:
-            audio_cache[seg.track] = load(tr.wav)
-        src = audio_cache[seg.track]
+        key = (seg.track, seg.parts)
+        if key not in audio_cache:
+            audio_cache[key] = stems.load_mix(tr, seg.parts, progress)
+        src = audio_cache[key]
 
         start = max(0.0, min(seg.start, tr.duration))
         end = max(start, min(seg.end, tr.duration))
@@ -189,9 +198,16 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
         tsec = max(0.0, seg.transition_seconds)
         gap = int(max(0.0, seg.gap_before) * SR)
 
-        # Mistura no mesmo ritmo: acelera/desacelera a música que entra só durante a mistura
+        # Mesma música continuando do mesmo ponto (ex.: "nessa parte tira a voz"): emenda sem pular nada
+        seamless = (i > 0 and prev[0].id == tr.id and abs(start - prev[2]) < 0.05 and gap == 0
+                    and trans in ("crossfade", "cut") and seg.semitones == prev_semitones)
         matched, overlap = False, int(tsec * SR)
-        if i > 0 and trans == "crossfade" and gap == 0 and tsec >= 1 and _rubberband():
+        if seamless:
+            ov = min(tsec if trans == "crossfade" else MICRO_FADE, start, 0.5 * (end - start))
+            x = src[int((start - ov) * SR): int(end * SR)].copy()  # começa um pouco antes para sobrepor
+            overlap = int(ov * SR)
+        # Mistura no mesmo ritmo: acelera/desacelera a música que entra só durante a mistura
+        elif i > 0 and trans == "crossfade" and gap == 0 and tsec >= 1 and _rubberband():
             p_tr, p_start, p_end = prev
             ratio = _match_ratio(p_tr.bpm, tr.bpm)
             p_beats = _beats_in(p_tr, p_start, p_end)
@@ -210,7 +226,10 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
         if not matched:
             x = _pitch_shift(x, seg.semitones)
 
-        gain_db = TARGET_RMS_DB - _active_rms_db(x) + seg.volume_db
+        if seamless:  # mesmo ganho do trecho anterior: tirar a voz não pode deixar o resto mais alto
+            gain_db = prev_gain + seg.volume_db - prev_volume
+        else:
+            gain_db = TARGET_RMS_DB - _active_rms_db(x) + seg.volume_db
         x *= np.float32(10 ** (gain_db / 20))
 
         if i == 0:
@@ -219,6 +238,11 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
                 x[:n] *= _fade(min(n, len(x)), "in")[:, None]
             out = x
             pos = 0.0
+        elif seamless:
+            n = min(overlap, len(out), len(x))
+            mixed = _linear_mix(out[len(out) - n:], x[:n])
+            pos = len(out) / SR  # na linha do tempo, o ponto da música onde a mudança acontece
+            out = np.concatenate([out[: len(out) - n], mixed, x[n:]])
         elif trans == "crossfade" and gap == 0:
             n = min(overlap, len(out), len(x))
             mixed = _dj_mix(out[len(out) - n:], x[:n])
@@ -247,10 +271,12 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             "n": i + 1, "track": seg.track, "title": tr.title,
             "src_start": start, "src_end": end, "out_start": pos,
             "transition": trans if i > 0 else "início", "matched": matched, "gap": seg.gap_before,
+            "seamless": seamless, "parts": seg.parts,
             "semitones": seg.semitones,
             "lyric": line_near(tr.lyrics, start),
         })
         prev = (tr, start, end)
+        prev_gain, prev_volume, prev_semitones = gain_db, seg.volume_db, seg.semitones
 
     if plan.ending == "echo":
         m = min(int(MICRO_FADE * SR), len(out))
@@ -305,6 +331,10 @@ def describe(timeline: list[dict]) -> str:
             lines.append(f"Duração total: {fmt_time(item['total'])}{extra}")
             continue
         how = _LABELS.get(item["transition"], item["transition"])
+        if item.get("seamless"):
+            how = "continua a mesma música"
+        if item.get("parts", "full") != "full":
+            how += f", {stems.LABELS[item['parts']]}"
         if item.get("matched"):
             how += ", no mesmo ritmo"
         if item.get("gap"):

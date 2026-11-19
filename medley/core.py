@@ -63,7 +63,7 @@ def handle(
         progress("Montando o áudio…")
         out = data_dir / "out" / f"{session.path.stem}_v{session.version + 1}.mp3"
         try:
-            timeline = render(ans.plan, session.tracks, out)
+            timeline = render(ans.plan, session.tracks, out, progress)
         except Exception as e:
             log.exception("erro ao gerar o áudio")
             # Deixa o erro no histórico para a IA levar em conta na próxima mensagem

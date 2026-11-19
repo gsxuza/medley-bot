@@ -272,11 +272,14 @@ def cleanup(data_dir: Path, keep_days: float) -> int:
     limit = time.time() - keep_days * 86400
     removed = 0
     for sub in ("cache", "out"):
-        for f in (data_dir / sub).glob("*"):
-            # atime nem sempre é atualizado; mtime + uso recente via touch em load()
+        for f in (data_dir / sub).rglob("*"):
+            # mtime é atualizado (touch) sempre que o arquivo é usado
             if f.is_file() and f.stat().st_mtime < limit:
                 f.unlink(missing_ok=True)
                 removed += 1
+        for d in sorted((data_dir / sub).rglob("*"), reverse=True):  # pastas que ficaram vazias
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
     return removed
 
 

@@ -114,7 +114,13 @@ class Session:
         return notes
 
     def state_text(self) -> str:
-        parts = ["FAIXAS DISPONÍVEIS:"]
+        from . import stems
+
+        if stems.available():
+            sep = "disponível (a primeira vez em cada música leva alguns minutos; avise-a)"
+        else:
+            sep = "NÃO instalada (use sempre parts 'full')"
+        parts = [f"SEPARAÇÃO DE VOZ E INSTRUMENTOS: {sep}", "", "FAIXAS DISPONÍVEIS:"]
         parts += [t.summary() for t in self.tracks.values()] or ["(nenhuma ainda)"]
         parts.append(f"\nPLANO ATUAL (versão {self.version}, a que ela está ouvindo):")
         parts.append(self.plan.model_dump_json(indent=1) if self.plan else "(nenhum ainda)")

@@ -3,6 +3,7 @@
 - Problemas pequenos e óbvios são corrigidos aqui mesmo (ex.: "até 9:99" numa música de 4 min).
 - Problemas de verdade voltam para a IA corrigir (ex.: faixa que não existe, trecho de meio segundo).
 """
+from . import stems
 from .audio import TrackInfo, fmt_time
 from .plan import Plan
 
@@ -51,6 +52,11 @@ def check(plan: Plan, tracks: dict[str, TrackInfo]) -> tuple[Plan, list[str], li
                 f"(mínimo {MIN_SEGMENT:.0f} s). Confira se início e fim não estão trocados"
             )
 
+        if seg.parts != "full" and not stems.available():
+            problems.append(
+                f"{name}: separar voz e instrumentos não está instalado neste computador; use parts 'full' "
+                "e avise que essa função ainda não está disponível"
+            )
         if abs(seg.semitones) > MAX_SEMITONES:
             problems.append(
                 f"{name}: mudança de tom de {seg.semitones:+d} semitons é grande demais e deixa a voz artificial "
