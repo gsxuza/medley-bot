@@ -1,0 +1,97 @@
+# Medley Bot 💃🎶
+
+Bot de Telegram que junta e corta músicas para coreografias. Você manda links do YouTube
+(ou arquivos de áudio), explica o que quer e recebe o MP3 pronto, com transições na batida e
+volume igualado entre as músicas.
+
+## Como funciona
+
+```
+Mensagem no Telegram ──► baixa e analisa (yt-dlp + librosa: BPM, batidas, tom, energia)
+                     ──► Claude transforma o pedido num PLANO (JSON)
+                     ──► motor de áudio executa o plano (numpy + ffmpeg)
+                     ──► devolve o MP3 + a linha do tempo
+```
+
+A IA nunca mexe no áudio, ela só escreve e edita o plano. Para ajustar, ela pede "aumenta a
+transição", "começa 5 segundos antes" etc., e o bot gera uma nova versão.
+
+## Instalar (Windows, Mac ou Linux)
+
+1. Instale o **Python 3.11+** e o **ffmpeg**:
+   - Windows: `winget install Python.Python.3.12` e `winget install Gyan.FFmpeg`
+   - Mac: `brew install python ffmpeg`
+   - Linux: `sudo apt install python3-venv ffmpeg`
+2. Na pasta do projeto:
+   ```bash
+   python -m venv .venv
+   ```
+   Ative o ambiente (Windows: `.venv\Scripts\activate`; Mac/Linux: `source .venv/bin/activate`) e instale:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Copie `.env.example` para `.env` e preencha:
+   - `ANTHROPIC_API_KEY`: crie em https://console.anthropic.com
+   - `TELEGRAM_BOT_TOKEN`: no Telegram, fale com **@BotFather**, mande `/newbot` e siga os passos.
+
+## Usar
+
+**Bot do Telegram:**
+```bash
+python -m medley.bot
+```
+Mande `/start` para o bot. Ele mostra o seu ID; coloque os IDs (o seu e o dela) em
+`ALLOWED_USER_IDS` no `.env` e reinicie o bot, para ninguém mais gastar seus créditos.
+
+**Conversa pelo terminal (sem Telegram):**
+```bash
+python -m medley.cli chat
+```
+
+**Só o motor de áudio (sem IA), com um plano escrito à mão:**
+```bash
+python -m medley.cli render plano.json musica1.mp3 musica2.mp3 -o medley.mp3
+```
+
+## O plano
+
+```json
+{
+  "segments": [
+    {"track": "T1", "start": 5, "end": 95, "transition": "crossfade", "transition_seconds": 3,
+     "gap_before": 0, "semitones": 0, "volume_db": 0},
+    {"track": "T2", "start": 62, "end": 180, "transition": "crossfade", "transition_seconds": 3,
+     "gap_before": 0, "semitones": 1, "volume_db": 0}
+  ],
+  "fade_in": 0, "fade_out": 3, "snap_to_beat": true, "speed": 1.0
+}
+```
+
+- `start`/`end`: segundos na música original. O crossfade acontece nos últimos N segundos de
+  um trecho e nos primeiros N do seguinte.
+- `transition`: `crossfade` (sobrepõe), `cut` (corte seco) ou `fade` (abaixa, depois entra a próxima).
+- `snap_to_beat`: ajusta cortes para a batida mais próxima (até 0,6 s de distância).
+- `semitones`: muda o tom. Usa o filtro rubberband do ffmpeg se existir; se não, o librosa (qualidade menor).
+- `speed`: 0.85 = 85% da velocidade, sem mudar o tom (bom para ensaio).
+
+## Arquivos
+
+| Arquivo | O que faz |
+|---|---|
+| `medley/audio.py` | download (yt-dlp), conversão e análise |
+| `medley/render.py` | executa o plano e gera o MP3 |
+| `medley/plan.py` | formato do plano (também é o schema que o Claude preenche) |
+| `medley/agent.py` | prompt e chamada ao Claude |
+| `medley/session.py` | estado de cada conversa (salvo em `data/chats/`) |
+| `medley/core.py` | fluxo de uma mensagem |
+| `medley/bot.py` / `medley/cli.py` | Telegram / terminal |
+
+## Limitações conhecidas
+
+- A IA não ouve a música: quando ela fala "no refrão" sem dar o tempo, o bot estima pela
+  curva de energia e diz o tempo que escolheu. Com minutos e segundos o resultado é exato.
+- Crossfade entre músicas com BPMs muito diferentes pode embolar. Nesses casos o bot prefere
+  transições curtas ou fade.
+- O YouTube às vezes bloqueia downloads (principalmente de servidores na nuvem). Mantenha o
+  `yt-dlp` atualizado (`pip install -U yt-dlp`) ou mande o arquivo de áudio direto no chat.
+- Bots do Telegram só baixam arquivos de até 20 MB.

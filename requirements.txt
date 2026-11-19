@@ -1,0 +1,8 @@
+anthropic>=2.10
+pydantic>=2.7
+yt-dlp
+librosa>=0.10
+soundfile
+numpy
+python-telegram-bot>=21
+python-dotenv
