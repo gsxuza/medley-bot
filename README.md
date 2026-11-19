@@ -53,6 +53,13 @@ estava antes".
 Mande `/start` para o bot. Ele mostra o seu ID; coloque os IDs (o seu e o dela) em
 `ALLOWED_USER_IDS` no `.env` e reinicie o bot, para ninguém mais gastar seus créditos.
 
+**No Windows, sem digitar comandos:** dê dois cliques em `iniciar-bot.bat`. Se o bot cair por
+algum erro (internet caiu, por exemplo), ele liga de novo sozinho depois de 15 segundos.
+
+Para ligar junto com o Windows: aperte `Win + R`, digite `shell:startup` e dê Enter. Na pasta
+que abrir, crie um atalho para o `iniciar-bot.bat` (botão direito no arquivo → "Mostrar mais
+opções" → "Criar atalho", e arraste o atalho para lá).
+
 **Conversa pelo terminal (sem Telegram):**
 ```bash
 python -m medley.cli chat
