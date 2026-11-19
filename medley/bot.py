@@ -8,12 +8,12 @@ import threading
 import time
 from pathlib import Path
 
-import anthropic
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+from . import agent
 from .audio import cleanup, has_rubberband
 from .core import handle
 from .session import Session
@@ -25,7 +25,6 @@ log = logging.getLogger("medley")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 ALLOWED = {int(x) for x in os.getenv("ALLOWED_USER_IDS", "").replace(" ", "").split(",") if x}
-client = anthropic.Anthropic()
 locks: dict[int, asyncio.Lock] = {}
 
 HELP = (
@@ -88,7 +87,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             text = msg.text or msg.caption or ""
             session = _session(chat_id)
             try:
-                result = await asyncio.to_thread(handle, client, session, text, DATA_DIR, files, progress)
+                result = await asyncio.to_thread(handle, session, text, DATA_DIR, files, progress)
             except Exception:
                 log.exception("erro processando mensagem")
                 await status.edit_text("Ops, algo deu errado do meu lado. Tenta de novo?")
@@ -105,6 +104,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _startup_checks() -> None:
+    log.info("IA: %s (%s)", agent.provider(), agent.model_name())
     for tool in ("ffmpeg",):
         if not shutil.which(tool):
             raise SystemExit(f"{tool} não encontrado. Instale o ffmpeg.")

@@ -8,7 +8,7 @@ volume igualado entre as músicas.
 
 ```
 Mensagem no Telegram ──► baixa e analisa (yt-dlp + librosa: BPM, batidas, tom, energia)
-                     ──► Claude transforma o pedido num PLANO (JSON)
+                     ──► a IA (Gemini ou Claude) transforma o pedido num PLANO (JSON)
                      ──► motor de áudio executa o plano (numpy + ffmpeg)
                      ──► devolve o MP3 + a linha do tempo
 ```
@@ -31,7 +31,13 @@ transição", "começa 5 segundos antes" etc., e o bot gera uma nova versão.
    pip install -r requirements.txt
    ```
 3. Copie `.env.example` para `.env` e preencha:
-   - `ANTHROPIC_API_KEY`: crie em https://console.anthropic.com
+   - **IA (escolha uma):**
+     - Gemini, gratuito: crie a chave em https://aistudio.google.com/apikey e coloque em
+       `GEMINI_API_KEY`, com `LLM_PROVIDER=gemini`. O plano gratuito tem limite de pedidos por
+       minuto e por dia (de sobra para uso pessoal), e o Google pode usar as conversas do plano
+       gratuito para melhorar os produtos dele.
+     - Claude, pago por uso: crie a chave em https://console.anthropic.com e coloque em
+       `ANTHROPIC_API_KEY`, com `LLM_PROVIDER=anthropic`.
    - `TELEGRAM_BOT_TOKEN`: no Telegram, fale com **@BotFather**, mande `/newbot` e siga os passos.
 
 ## Usar
@@ -133,8 +139,8 @@ da mais simples para a mais trabalhosa:
 |---|---|
 | `medley/audio.py` | download (yt-dlp), conversão e análise |
 | `medley/render.py` | executa o plano e gera o MP3 |
-| `medley/plan.py` | formato do plano (também é o schema que o Claude preenche) |
-| `medley/agent.py` | prompt e chamada ao Claude |
+| `medley/plan.py` | formato do plano (também é o schema que a IA preenche) |
+| `medley/agent.py` | prompt e chamada à IA (Gemini ou Claude) |
 | `medley/session.py` | estado de cada conversa (salvo em `data/chats/`) |
 | `medley/core.py` | fluxo de uma mensagem |
 | `medley/bot.py` / `medley/cli.py` | Telegram / terminal |

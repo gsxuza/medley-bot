@@ -15,12 +15,9 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 
 
 def cmd_chat(args) -> None:
-    import anthropic
-
     from .core import handle
     from .session import Session
 
-    client = anthropic.Anthropic()
     session = Session.load(DATA_DIR / "chats" / "terminal.json")
     if args.novo:
         session.reset()
@@ -40,7 +37,7 @@ def cmd_chat(args) -> None:
         if text.startswith("/arquivo "):
             p = Path(text.split(" ", 1)[1].strip().strip('"'))
             files, text = [(p, p.stem)], ""
-        r = handle(client, session, text, DATA_DIR, files, progress=lambda m: print(f"  … {m}"))
+        r = handle(session, text, DATA_DIR, files, progress=lambda m: print(f"  … {m}"))
         print(f"\nbot> {r.reply}")
         if r.mp3:
             print(f"\n{r.timeline}\n🎧 {r.mp3}")

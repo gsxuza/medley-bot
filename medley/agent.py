@@ -1,10 +1,23 @@
-"""Transforma o pedido em linguagem natural num Plan (saída estruturada da API do Claude)."""
-import anthropic
+"""Transforma o pedido em linguagem natural num Plan (saída estruturada).
+
+Funciona com dois provedores, escolhidos pela variável LLM_PROVIDER no .env:
+  - "gemini"    (Google; tem plano gratuito)  -> precisa de GEMINI_API_KEY
+  - "anthropic" (Claude; pago por uso)        -> precisa de ANTHROPIC_API_KEY
+Se LLM_PROVIDER estiver vazio, usa o provedor cuja chave estiver preenchida.
+"""
+import functools
+import os
+
+from dotenv import load_dotenv
 
 from .plan import AgentResponse
 from .session import MAX_HISTORY, Session
 
-MODEL = "claude-opus-5-5"
+load_dotenv()
+
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL") or "claude-opus-5-5"
+# Alias do Google que sempre aponta para o Gemini Flash mais recente
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-flash-latest"
 
 SYSTEM = """Você é um assistente que monta medleys e edições de áudio para o ministério de dança de uma igreja. \
 Quem conversa com você é a líder de dança, pelo celular. Ela manda links do YouTube (ou arquivos de áudio) e \
@@ -38,18 +51,49 @@ class AgentError(Exception):
     pass
 
 
-def respond(client: anthropic.Anthropic, session: Session, user_text: str) -> AgentResponse:
+def provider() -> str:
+    p = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+    if p in ("gemini", "anthropic"):
+        return p
+    if p:
+        raise SystemExit(f"LLM_PROVIDER inválido: {p!r} (use 'gemini' ou 'anthropic')")
+    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        return "gemini"
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    raise SystemExit("Nenhuma chave de IA configurada: preencha GEMINI_API_KEY ou ANTHROPIC_API_KEY no .env")
+
+
+def model_name() -> str:
+    return GEMINI_MODEL if provider() == "gemini" else CLAUDE_MODEL
+
+
+@functools.lru_cache(maxsize=1)
+def _client():
+    if provider() == "gemini":
+        from google import genai
+
+        return genai.Client()  # lê GEMINI_API_KEY (ou GOOGLE_API_KEY)
+    import anthropic
+
+    return anthropic.Anthropic()
+
+
+def _build_messages(session: Session, user_text: str) -> list[dict]:
     messages = [{"role": m["role"], "content": m["content"]} for m in session.history[-MAX_HISTORY:]]
-    # A API exige que a conversa comece com a usuária
+    # As APIs exigem que a conversa comece com a usuária
     while messages and messages[0]["role"] != "user":
         messages.pop(0)
     messages.append({
         "role": "user",
         "content": f"<estado>\n{session.state_text()}\n</estado>\n\n{user_text}",
     })
+    return messages
 
-    response = client.beta.messages.parse(
-        model=MODEL,
+
+def _respond_claude(messages: list[dict]) -> AgentResponse:
+    response = _client().beta.messages.parse(
+        model=CLAUDE_MODEL,
         max_tokens=16000,
         system=SYSTEM,
         output_config={"effort": "medium"},
@@ -63,7 +107,46 @@ def respond(client: anthropic.Anthropic, session: Session, user_text: str) -> Ag
         raise AgentError("O modelo recusou o pedido.")
     if response.stop_reason == "max_tokens" or response.parsed_output is None:
         raise AgentError(f"Resposta incompleta (stop_reason={response.stop_reason}).")
-    result = response.parsed_output
+    return response.parsed_output
+
+
+def _respond_gemini(messages: list[dict]) -> AgentResponse:
+    from google.genai import errors, types
+
+    contents = [
+        types.Content(role="model" if m["role"] == "assistant" else "user", parts=[types.Part(text=m["content"])])
+        for m in messages
+    ]
+    try:
+        response = _client().models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM,
+                response_mime_type="application/json",
+                response_schema=AgentResponse,
+            ),
+        )
+    except errors.ClientError as e:
+        if e.code == 429:
+            raise AgentError("limite gratuito do Gemini atingido; espere um pouco e tente de novo") from e
+        raise AgentError(f"erro do Gemini: {e.message or e}") from e
+    except errors.ServerError as e:
+        raise AgentError("o Gemini está instável agora; tente de novo em instantes") from e
+
+    parsed = response.parsed
+    if isinstance(parsed, AgentResponse):
+        return parsed
+    try:
+        return AgentResponse.model_validate_json(response.text or "")
+    except Exception as e:
+        reason = response.candidates[0].finish_reason if response.candidates else "sem resposta"
+        raise AgentError(f"resposta inválida do Gemini ({reason})") from e
+
+
+def respond(session: Session, user_text: str) -> AgentResponse:
+    messages = _build_messages(session, user_text)
+    result = _respond_gemini(messages) if provider() == "gemini" else _respond_claude(messages)
 
     session.history.append({"role": "user", "content": user_text})
     session.history.append({"role": "assistant", "content": result.reply})

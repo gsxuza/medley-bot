@@ -2,8 +2,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-import anthropic
-
 from . import agent
 from .render import describe, render
 from .session import URL_RE, Session
@@ -17,7 +15,6 @@ class Result:
 
 
 def handle(
-    client: anthropic.Anthropic,
     session: Session,
     text: str,
     data_dir: Path,
@@ -50,7 +47,7 @@ def handle(
 
     progress("Pensando na edição…")
     try:
-        ans = agent.respond(client, session, user_text)
+        ans = agent.respond(session, user_text)
     except agent.AgentError as e:
         session.save()
         return Result(f"Tive um problema para entender o pedido ({e}). Pode tentar de novo?")
