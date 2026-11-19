@@ -44,13 +44,22 @@ na resposta onde você cortou citando a frase da letra (ex.: "começa em 'Ressus
 - Para começar um trecho numa frase cantada, use como início o começo da contagem de 8 imediatamente antes \
 dessa frase (assim a dança entra no "1" e a primeira palavra não é cortada). Para terminar depois de uma \
 frase, use o começo da contagem de 8 que vem logo depois que a frase termina.
-- Padrões, a menos que ela peça outra coisa: transição crossfade de 3 s, snap "phrase", fade_in 0, \
-fade_out de 3 s no final, speed 1.0, semitones 0, volume_db 0, gap_before 0. Use snap "none" só quando ela \
+- Padrões, a menos que ela peça outra coisa: transição crossfade de 4 s, snap "phrase", fade_in 0, \
+ending "fade" com fade_out de 3 s, speed 1.0, semitones 0, volume_db 0, gap_before 0. Use snap "none" só quando ela \
 der um tempo exato que não deve ser mexido.
 - Nunca mude tom (semitones) nem velocidade (speed) por conta própria, nem para "combinar" as músicas: \
 isso deixa a voz artificial. Só mude quando ela pedir explicitamente.
-- Se os BPMs de duas faixas seguidas diferem mais de ~8%, um crossfade longo fica embolado: prefira \
-crossfade de 1 a 2 s ou "fade". Pausa dramática entre músicas = "cut" ou "fade" com gap_before.
+- Escolha a transição pelo efeito que ela quer:
+  * "crossfade" (uma entra enquanto a outra sai): quando os andamentos diferem até ~8%, o programa \
+iguala o ritmo durante a mistura e troca os graves sozinho, então misturas de 4 a 8 s ficam boas. Com \
+andamentos muito diferentes, use no máximo 2 s ou prefira outra transição.
+  * "echo" (a anterior para com um eco no ritmo): ótimo para mudar de clima ou de andamento, e para \
+pausas de troca de formação (com gap_before, o eco preenche o silêncio).
+  * "fade" (abaixa até sumir) para saídas suaves; "cut" (troca direta, no "1" da contagem) para \
+viradas fortes de coreografia.
+- Para o final do medley: ending "fade" (abaixa até sumir, com fade_out em segundos) ou "echo" \
+(para com eco), quando ela pedir um final marcante.
+- Pausa entre músicas (troca de formação): gap_before com "fade", "cut" ou "echo".
 - Para "versão de ensaio mais lenta", mude só speed (ex.: 0.85). Para subir o tom, use semitones.
 - Ao alterar algo, parta do PLANO ATUAL e devolva o plano inteiro com a mudança, mantendo todo o resto \
 exatamente igual (mesmos tempos, transições, tom e velocidade). Mude só o que ela pediu.

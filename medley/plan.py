@@ -12,12 +12,14 @@ class Segment(BaseModel):
     track: str = Field(description="ID da faixa, ex: 'T1'")
     start: float = Field(description="Início do trecho, em segundos, no tempo da música original")
     end: float = Field(description="Fim do trecho, em segundos, no tempo da música original")
-    transition: Literal["crossfade", "cut", "fade"] = Field(
+    transition: Literal["crossfade", "cut", "fade", "echo"] = Field(
         description=(
             "Como este trecho entra depois do anterior (ignorado no primeiro trecho). "
-            "crossfade: os dois se sobrepõem, um sumindo e o outro entrando. "
+            "crossfade: os dois se sobrepõem, um sumindo e o outro entrando (o programa iguala o ritmo "
+            "e troca os graves sozinho quando os andamentos são parecidos). "
             "cut: corte seco. "
-            "fade: o anterior abaixa até sumir, depois este começa."
+            "fade: o anterior abaixa até sumir, depois este começa. "
+            "echo: o anterior para com um eco no ritmo, que continua por baixo do começo deste."
         )
     )
     transition_seconds: float = Field(
@@ -31,7 +33,11 @@ class Segment(BaseModel):
 class Plan(BaseModel):
     segments: list[Segment]
     fade_in: float = Field(description="Fade-in no começo do medley, em segundos")
-    fade_out: float = Field(description="Fade-out no final do medley, em segundos")
+    fade_out: float = Field(description="Fade-out no final do medley, em segundos (usado quando ending = 'fade')")
+    ending: Literal["fade", "echo"] = Field(
+        default="fade",
+        description="Como o medley termina: 'fade' = abaixa até sumir; 'echo' = para com um eco no ritmo",
+    )
     snap: Literal["phrase", "beat", "none"] = Field(
         description=(
             "Como ajustar o início e o fim de cada trecho: 'phrase' = no começo da contagem de 8 "

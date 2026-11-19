@@ -81,6 +81,83 @@ def _fade(n: int, kind: str) -> np.ndarray:
     return np.sin(t * np.pi / 2) if kind == "in" else np.cos(t * np.pi / 2)
 
 
+MATCH_TOLERANCE = 0.08  # só sincroniza o ritmo se os andamentos diferem até 8% (mais que isso soa artificial)
+RAMP_BEATS = 8          # depois da mistura, volta ao andamento normal ao longo de 8 batidas
+BASS_HZ = 180           # abaixo disso é "grave" (bumbo, baixo)
+
+
+def _match_ratio(bpm_out: float, bpm_in: float) -> float | None:
+    """Quanto acelerar a música que entra para bater com a que sai (considera metade/dobro do andamento)."""
+    if bpm_out <= 0 or bpm_in <= 0:
+        return None
+    best = min((bpm_out * k / bpm_in for k in (0.5, 1.0, 2.0)), key=lambda r: abs(r - 1))
+    return best if abs(best - 1) <= MATCH_TOLERANCE else None
+
+
+def _tempo_ramp(x: np.ndarray, ratio: float, hold: float, ramp: float, semitones: int) -> np.ndarray:
+    """Toca x acelerado por `ratio` nos primeiros `hold` segundos e volta aos poucos ao normal em `ramp` segundos.
+
+    Usa o rubberband do ffmpeg (muda andamento sem mudar o tom) com comandos programados no tempo.
+    """
+    steps = 12
+    cmds = [f"{hold + ramp * j / steps:.3f} rubberband tempo {ratio + (1 - ratio) * j / steps:.5f}"
+            for j in range(1, steps + 1)]
+    pitch = 2 ** (semitones / 12)
+    return _ffmpeg_filter(
+        x, f"asendcmd=c='{';'.join(cmds)}',rubberband=tempo={ratio:.5f}:pitch={pitch:.6f}:formant=preserved"
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def _bass_filter():
+    from scipy.signal import butter
+
+    return butter(4, BASS_HZ, btype="low", fs=SR, output="sos")
+
+
+def _split_bass(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    from scipy.signal import sosfiltfilt
+
+    low = sosfiltfilt(_bass_filter(), x, axis=0).astype(np.float32)
+    return low, x - low
+
+
+def _dj_mix(tail: np.ndarray, head: np.ndarray) -> np.ndarray:
+    """Mistura o fim de uma música com o começo da outra trocando os graves no meio.
+
+    Agudos e médios: um sobe enquanto o outro desce. Graves: só um de cada vez (dois bumbos/baixos
+    juntos é o que deixa a transição embolada), trocando rapidamente no meio da mistura.
+    """
+    n = len(tail)
+    t = np.linspace(0, 1, n, dtype=np.float32)
+    if n < int(1.5 * SR):  # mistura curta: sem troca de graves
+        return tail * _fade(n, "out")[:, None] + head * _fade(n, "in")[:, None]
+    lo_a, hi_a = _split_bass(tail)
+    lo_b, hi_b = _split_bass(head)
+    swap = np.clip((t - 0.5) / 0.25 + 0.5, 0, 1)  # troca dos graves entre 37% e 62% da mistura
+    g_in, g_out = np.sin(swap * np.pi / 2), np.cos(swap * np.pi / 2)
+    return (hi_a * _fade(n, "out")[:, None] + hi_b * _fade(n, "in")[:, None]
+            + lo_a * g_out[:, None] + lo_b * g_in[:, None])
+
+
+def _echo_tail(x: np.ndarray, bpm: float, repeats: int = 6, feedback: float = 0.55) -> np.ndarray:
+    """Eco no ritmo da música: repete a última batida, cada vez mais baixo e sem graves."""
+    delay = int(SR * 60 / (bpm if bpm > 0 else 100))
+    chunk = x[-delay:] if len(x) >= delay else x
+    tail = np.zeros((delay * repeats + len(chunk), 2), np.float32)
+    for k in range(1, repeats + 1):
+        tail[k * delay - delay: k * delay - delay + len(chunk)] += chunk * feedback ** k
+    _, high = _split_bass(tail)
+    n = min(len(high), int(0.3 * SR))
+    high[-n:] *= _fade(n, "out")[:, None]
+    return high
+
+
+def _beats_in(tr: TrackInfo, start: float, end: float) -> list[float]:
+    """Batidas da faixa dentro do trecho, em segundos a partir do início do trecho."""
+    return [b - start for b in tr.beats if start - 0.05 <= b <= end]
+
+
 def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict]:
     """Gera o MP3 e retorna a linha do tempo (para mostrar à usuária)."""
     if not plan.segments:
@@ -108,13 +185,33 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             raise ValueError(f"Trecho {i + 1} ({seg.track}) ficou curto demais: {start:.1f}s a {end:.1f}s.")
 
         x = src[int(start * SR): int(end * SR)].copy()
-        x = _pitch_shift(x, seg.semitones)
-        gain_db = TARGET_RMS_DB - _active_rms_db(x) + seg.volume_db
-        x *= np.float32(10 ** (gain_db / 20))
-
         trans = seg.transition if i > 0 else "cut"
         tsec = max(0.0, seg.transition_seconds)
         gap = int(max(0.0, seg.gap_before) * SR)
+
+        # Mistura no mesmo ritmo: acelera/desacelera a música que entra só durante a mistura
+        matched, overlap = False, int(tsec * SR)
+        if i > 0 and trans == "crossfade" and gap == 0 and tsec >= 1 and _rubberband():
+            p_tr, p_start, p_end = prev
+            ratio = _match_ratio(p_tr.bpm, tr.bpm)
+            p_beats = _beats_in(p_tr, p_start, p_end)
+            in_beats = _beats_in(tr, start, end)
+            if ratio and len(p_beats) > 4 and in_beats:
+                p_len = p_end - p_start
+                # a mistura começa numa batida da música que sai...
+                b_k = min((b for b in p_beats if p_len - b >= 1), key=lambda b: abs((p_len - b) - tsec), default=None)
+                if b_k is not None:
+                    # ...e a primeira batida da que entra cai exatamente nela
+                    first = max(0.0, in_beats[0])
+                    ov = (p_len - b_k) + first / ratio
+                    x = _tempo_ramp(x, ratio, hold=ov * ratio, ramp=RAMP_BEATS * 60 / tr.bpm,
+                                    semitones=seg.semitones)
+                    matched, overlap = True, int(ov * SR)
+        if not matched:
+            x = _pitch_shift(x, seg.semitones)
+
+        gain_db = TARGET_RMS_DB - _active_rms_db(x) + seg.volume_db
+        x *= np.float32(10 ** (gain_db / 20))
 
         if i == 0:
             n = int(plan.fade_in * SR)
@@ -123,33 +220,46 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             out = x
             pos = 0.0
         elif trans == "crossfade" and gap == 0:
-            n = min(int(tsec * SR), len(out), len(x))
-            mixed = out[len(out) - n:] * _fade(n, "out")[:, None] + x[:n] * _fade(n, "in")[:, None]
+            n = min(overlap, len(out), len(x))
+            mixed = _dj_mix(out[len(out) - n:], x[:n])
             pos = (len(out) - n) / SR
             out = np.concatenate([out[: len(out) - n], mixed, x[n:]])
         else:
+            echo = None
+            if trans == "echo":
+                echo = _echo_tail(out, prev[0].bpm)
             if trans == "fade":
                 n = min(int(tsec * SR), len(out))
                 out[len(out) - n:] *= _fade(n, "out")[:, None]
-            else:  # corte seco: micro-fade para não estalar
+            else:  # corte seco (ou eco): micro-fade para não estalar
                 m = min(int(MICRO_FADE * SR), len(out))
                 out[len(out) - m:] *= _fade(m, "out")[:, None]
             m = min(int(MICRO_FADE * SR), len(x))
             x[:m] *= _fade(m, "in")[:, None]
+            cut_at = len(out)
             out = np.concatenate([out, np.zeros((gap, 2), np.float32), x])
             pos = (len(out) - len(x)) / SR
+            if echo is not None:  # o eco continua por baixo do silêncio / do começo da próxima
+                k = min(len(echo), len(out) - cut_at)
+                out[cut_at:cut_at + k] += echo[:k]
 
         timeline.append({
             "n": i + 1, "track": seg.track, "title": tr.title,
             "src_start": start, "src_end": end, "out_start": pos,
-            "transition": trans if i > 0 else "início",
+            "transition": trans if i > 0 else "início", "matched": matched, "gap": seg.gap_before,
             "semitones": seg.semitones,
             "lyric": line_near(tr.lyrics, start),
         })
+        prev = (tr, start, end)
 
-    n = min(int(plan.fade_out * SR), len(out))
-    if n:
-        out[len(out) - n:] *= _fade(n, "out")[:, None]
+    if plan.ending == "echo":
+        m = min(int(MICRO_FADE * SR), len(out))
+        out[len(out) - m:] *= _fade(m, "out")[:, None]
+        out = np.concatenate([out, _echo_tail(out, prev[0].bpm)])
+    else:
+        n = min(int(plan.fade_out * SR), len(out))
+        if n:
+            out[len(out) - n:] *= _fade(n, "out")[:, None]
 
     speed = float(np.clip(plan.speed, 0.5, 2.0))
     total = len(out) / SR / speed
@@ -170,21 +280,39 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             check=True,
         )
 
-    timeline.append({"total": total, "speed": speed})
+    timeline.append({"total": total, "speed": speed, "ending": plan.ending, "fade_out": plan.fade_out})
     return timeline
+
+
+_LABELS = {
+    "início": "início",
+    "crossfade": "uma entra enquanto a outra sai",
+    "fade": "a anterior abaixa até sumir",
+    "cut": "troca direta",
+    "echo": "a anterior termina com eco",
+}
 
 
 def describe(timeline: list[dict]) -> str:
     lines = []
     for item in timeline:
         if "total" in item:
+            if item.get("ending") == "echo":
+                lines.append("Final: termina com eco")
+            elif item.get("fade_out", 0) > 0:
+                lines.append(f"Final: abaixa até sumir ({item['fade_out']:g} s)")
             extra = f" (velocidade {item['speed']:.0%})" if abs(item.get("speed", 1) - 1) > 1e-3 else ""
             lines.append(f"Duração total: {fmt_time(item['total'])}{extra}")
             continue
+        how = _LABELS.get(item["transition"], item["transition"])
+        if item.get("matched"):
+            how += ", no mesmo ritmo"
+        if item.get("gap"):
+            how += f", {item['gap']:g} s de silêncio"
         lines.append(
             f"{fmt_time(item['out_start'])} ▸ {item['track']} \"{item['title']}\" "
-            f"({fmt_time(item['src_start'])}–{fmt_time(item['src_end'])}) [{item['transition']}]"
-            + (f" [tom {item['semitones']:+d}]" if item.get("semitones") else "")
+            f"({fmt_time(item['src_start'])}–{fmt_time(item['src_end'])}) — {how}"
+            + (f" — tom {item['semitones']:+d}" if item.get("semitones") else "")
             + (f"\n    ♪ \"{item['lyric'][:60]}\"" if item.get("lyric") else "")
         )
     return "\n".join(lines)

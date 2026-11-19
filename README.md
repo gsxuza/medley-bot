@@ -73,13 +73,21 @@ python -m medley.cli render plano.json musica1.mp3 musica2.mp3 -o medley.mp3
     {"track": "T2", "start": 62, "end": 180, "transition": "crossfade", "transition_seconds": 3,
      "gap_before": 0, "semitones": 1, "volume_db": 0}
   ],
-  "fade_in": 0, "fade_out": 3, "snap": "phrase", "speed": 1.0
+  "fade_in": 0, "fade_out": 3, "ending": "fade", "snap": "phrase", "speed": 1.0
 }
 ```
 
 - `start`/`end`: segundos na música original. O crossfade acontece nos últimos N segundos de
   um trecho e nos primeiros N do seguinte.
-- `transition`: `crossfade` (sobrepõe), `cut` (corte seco) ou `fade` (abaixa, depois entra a próxima).
+- `transition`: como o trecho entra depois do anterior:
+  - `crossfade`: uma música entra enquanto a outra sai. Se os andamentos diferem até 8%, a que
+    entra é acelerada/desacelerada só durante a mistura para as batidas coincidirem, e volta
+    aos poucos ao andamento dela depois (8 batidas). Os graves são trocados no meio da mistura,
+    como fazem os DJs, para não embolar.
+  - `echo`: a anterior para com um eco no ritmo, que continua por baixo do começo da próxima.
+  - `fade`: a anterior abaixa até sumir, depois entra a próxima.
+  - `cut`: troca direta.
+- `ending`: `fade` (abaixa até sumir, durante `fade_out` segundos) ou `echo` (termina com eco).
 - `snap`: `phrase` ajusta cada corte para o começo da contagem de 8 mais próxima (o "1" da dança);
   `beat`, para a batida mais próxima; `none` usa o tempo exato.
 - `semitones`: muda o tom. Usa o filtro rubberband do ffmpeg se existir; se não, o librosa (qualidade menor).
