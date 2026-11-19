@@ -80,7 +80,13 @@ def _client():
         from google.genai import types
 
         # v1beta: é onde ficam os apelidos (gemini-flash-latest) e a saída estruturada completa
-        return genai.Client(http_options=types.HttpOptions(api_version="v1beta"))
+        return genai.Client(http_options=types.HttpOptions(
+            api_version="v1beta",
+            # Tenta de novo, com espera crescente, quando o Google responde "sobrecarregado"
+            retry_options=types.HttpRetryOptions(
+                attempts=3, initial_delay=2, max_delay=10, http_status_codes=[500, 502, 503, 504]
+            ),
+        ))
     import anthropic
 
     return anthropic.Anthropic()
@@ -120,24 +126,22 @@ def _respond_claude(messages: list[dict]) -> AgentResponse:
 _gemini_model: str | None = None
 
 
-def _discover_gemini_model() -> str:
-    """Escolhe o modelo Flash mais recente disponível para esta chave."""
+def _gemini_candidates() -> list[str]:
+    """Modelos Flash disponíveis para esta chave, do melhor para o pior (versões 'lite' por último)."""
     names = []
     for m in _client().models.list():
         name = (m.name or "").removeprefix("models/")
         actions = m.supported_actions or []
         if "flash" in name and "generateContent" in actions and not any(
-            x in name for x in ("lite", "image", "tts", "audio", "live", "thinking", "exp")
+            x in name for x in ("image", "tts", "audio", "live", "thinking", "exp")
         ):
             names.append(name)
-    if not names:
-        raise AgentError("nenhum modelo Gemini Flash disponível para esta chave")
 
-    def version(n: str) -> tuple:
+    def rank(n: str) -> tuple:
         nums = re.findall(r"\d+(?:\.\d+)?", n)
-        return (float(nums[0]) if nums else 0.0, "preview" not in n, n)
+        return ("lite" not in n, float(nums[0]) if nums else 0.0, "preview" not in n, n)
 
-    return max(names, key=version)
+    return sorted(names, key=rank, reverse=True)
 
 
 def _respond_gemini(messages: list[dict]) -> AgentResponse:
@@ -154,22 +158,34 @@ def _respond_gemini(messages: list[dict]) -> AgentResponse:
         response_schema=AgentResponse,
     )
     model = _gemini_model or GEMINI_MODEL
-    try:
+    tried: list[str] = []
+    response = None
+    for _ in range(4):  # o modelo escolhido + até 3 alternativos
         try:
             response = _client().models.generate_content(model=model, contents=contents, config=config)
+            break
         except errors.ClientError as e:
+            if e.code == 429:
+                raise AgentError("limite gratuito do Gemini atingido; espere um pouco e tente de novo") from e
             if e.code != 404:
-                raise
-            # Modelo não existe (nomes mudam com o tempo): descobre um disponível e tenta de novo
-            _gemini_model = _discover_gemini_model()
-            log.warning("modelo %s não encontrado; usando %s", model, _gemini_model)
-            response = _client().models.generate_content(model=_gemini_model, contents=contents, config=config)
-    except errors.ClientError as e:
-        if e.code == 429:
-            raise AgentError("limite gratuito do Gemini atingido; espere um pouco e tente de novo") from e
-        raise AgentError(f"erro do Gemini: {e.message or e}") from e
-    except errors.ServerError as e:
-        raise AgentError("o Gemini está instável agora; tente de novo em instantes") from e
+                raise AgentError(f"erro do Gemini: {e.message or e}") from e
+            reason = "não encontrado"
+        except errors.ServerError:
+            # O SDK já tentou de novo algumas vezes; o modelo está sobrecarregado
+            reason = "sobrecarregado"
+        tried.append(model)
+        try:
+            alternatives = [m for m in _gemini_candidates() if m not in tried]
+        except Exception:
+            alternatives = []
+        if not alternatives:
+            break
+        log.warning("modelo %s %s; tentando %s", model, reason, alternatives[0])
+        if reason == "não encontrado":
+            _gemini_model = alternatives[0]  # troca de vez; sobrecarga é temporária
+        model = alternatives[0]
+    if response is None:
+        raise AgentError("o Gemini está sobrecarregado agora; tente de novo em alguns minutos")
 
     parsed = response.parsed
     if isinstance(parsed, AgentResponse):
