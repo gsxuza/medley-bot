@@ -23,7 +23,12 @@ class Session:
     def load(cls, path: Path) -> "Session":
         s = cls(path=path)
         if path.exists():
-            d = json.loads(path.read_text())
+            raw = path.read_bytes()
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:  # arquivos antigos salvos na codificação do Windows
+                text = raw.decode("cp1252")
+            d = json.loads(text)
             s.tracks = {k: TrackInfo(**v) for k, v in d["tracks"].items()}
             s.plan = Plan.model_validate(d["plan"]) if d.get("plan") else None
             s.history = d.get("history", [])
@@ -37,7 +42,7 @@ class Session:
             "plan": self.plan.model_dump() if self.plan else None,
             "history": self.history[-MAX_HISTORY:],
             "version": self.version,
-        }, ensure_ascii=False))
+        }, ensure_ascii=False), encoding="utf-8")
 
     def reset(self) -> None:
         self.tracks, self.plan, self.history, self.version = {}, None, [], 0

@@ -142,7 +142,7 @@ def analyze(track_id: str, source: str, wav: Path, meta: dict) -> TrackInfo:
     """BPM, batidas, tom e curva de energia. Resultado fica em cache ao lado do WAV."""
     cache = wav.with_suffix(".analysis.json")
     if cache.exists():
-        d = json.loads(cache.read_text())
+        d = json.loads(cache.read_text(encoding="utf-8"))
     else:
         import librosa
 
@@ -173,7 +173,7 @@ def analyze(track_id: str, source: str, wav: Path, meta: dict) -> TrackInfo:
             "beats": [round(float(b), 3) for b in beats],
             "energy": energy.tolist(),
         }
-        cache.write_text(json.dumps(d))
+        cache.write_text(json.dumps(d), encoding="utf-8")
 
     return TrackInfo(
         id=track_id, source=source, title=meta["title"], wav=str(wav),

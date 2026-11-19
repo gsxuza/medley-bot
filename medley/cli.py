@@ -55,7 +55,7 @@ def cmd_render(args) -> None:
         t = analyze(f"T{i}", str(p), wav, meta)
         tracks[t.id] = t
         print(t.summary())
-    plan = Plan.model_validate(json.loads(Path(args.plan).read_text()))
+    plan = Plan.model_validate(json.loads(Path(args.plan).read_text(encoding="utf-8-sig")))
     tl = render(plan, tracks, Path(args.output))
     print("\n" + describe(tl) + f"\n🎧 {args.output}")
 
