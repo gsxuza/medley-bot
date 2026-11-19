@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from .audio import SR, TrackInfo, fmt_time, has_rubberband, load
+from .audio import SR, TrackInfo, ffmpeg, fmt_time, has_rubberband, load
 from .plan import Plan
 
 TARGET_RMS_DB = -16.0   # volume médio que todos os trechos passam a ter
@@ -56,7 +56,7 @@ def _ffmpeg_filter(x: np.ndarray, af: str) -> np.ndarray:
     with tempfile.TemporaryDirectory() as d:
         a, b = Path(d) / "in.wav", Path(d) / "out.wav"
         sf.write(a, x, SR, subtype="FLOAT")
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(a), "-af", af, str(b)], check=True)
+        subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", str(a), "-af", af, str(b)], check=True)
         y, _ = sf.read(b, dtype="float32", always_2d=True)
     return y
 
@@ -148,7 +148,7 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             filters.append(f"atempo={speed:.4f}")
         filters.append("alimiter=limit=0.89:level=disabled")  # segura picos, não muda o volume geral
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(tmp), "-af", ",".join(filters),
+            [ffmpeg(), "-y", "-loglevel", "error", "-i", str(tmp), "-af", ",".join(filters),
              "-c:a", "libmp3lame", "-b:a", "192k", str(out_mp3)],
             check=True,
         )

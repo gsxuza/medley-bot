@@ -1,4 +1,5 @@
 """Download, conversão e análise das músicas."""
+import functools
 import hashlib
 import json
 import os
@@ -52,6 +53,22 @@ class TrackInfo:
 ENERGY_STEP = 5
 
 
+@functools.lru_cache(maxsize=1)
+def ffmpeg() -> str:
+    """Caminho do ffmpeg: o instalado no sistema ou, se não houver, o que vem no pacote imageio-ffmpeg."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        raise RuntimeError(
+            "ffmpeg não encontrado. Rode: pip install -r requirements.txt (ou instale o ffmpeg)"
+        ) from None
+
+
 def fmt_time(t: float) -> str:
     t = max(0, t)
     return f"{int(t // 60)}:{t % 60:04.1f}" if t % 1 else f"{int(t // 60)}:{int(t % 60):02d}"
@@ -59,7 +76,7 @@ def fmt_time(t: float) -> str:
 
 def _to_wav(src: Path, dst: Path) -> None:
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-vn",
+        [ffmpeg(), "-y", "-loglevel", "error", "-i", str(src), "-vn",
          "-ac", "2", "-ar", str(SR), "-c:a", "pcm_s16le", str(dst)],
         check=True,
     )
@@ -184,7 +201,5 @@ def cleanup(data_dir: Path, keep_days: float) -> int:
 
 
 def has_rubberband() -> bool:
-    if not shutil.which("ffmpeg"):
-        return False
-    out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+    out = subprocess.run([ffmpeg(), "-hide_banner", "-filters"], capture_output=True, text=True).stdout
     return " rubberband " in out

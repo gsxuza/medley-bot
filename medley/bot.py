@@ -14,7 +14,7 @@ from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import agent
-from .audio import cleanup, has_rubberband
+from .audio import cleanup, ffmpeg, has_rubberband
 from .core import handle
 from .session import Session
 
@@ -105,9 +105,10 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 def _startup_checks() -> None:
     log.info("IA: %s (%s)", agent.provider(), agent.model_name())
-    for tool in ("ffmpeg",):
-        if not shutil.which(tool):
-            raise SystemExit(f"{tool} não encontrado. Instale o ffmpeg.")
+    try:
+        log.info("ffmpeg: %s", ffmpeg())
+    except RuntimeError as e:
+        raise SystemExit(str(e))
     if not shutil.which("deno"):
         log.warning("deno não encontrado: o yt-dlp pode falhar em alguns vídeos do YouTube.")
     if not ALLOWED:

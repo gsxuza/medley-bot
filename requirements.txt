@@ -5,6 +5,7 @@ yt-dlp[default]
 deno
 librosa>=0.10
 soundfile
+imageio-ffmpeg
 numpy
 python-telegram-bot>=21
 python-dotenv
