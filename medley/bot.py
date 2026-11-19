@@ -16,7 +16,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from . import agent
 from .audio import cleanup, ffmpeg, has_rubberband
-from .core import handle
+from .core import handle, undo
 from .session import Session
 
 load_dotenv()
@@ -35,6 +35,7 @@ HELP = (
     "• \"Corta a primeira de 0:15 até 2:30\"\n"
     "• \"Deixa a transição mais longa\" / \"tira o silêncio do começo\"\n"
     "• \"Me manda uma versão 85% pra ensaiar\"\n\n"
+    "/desfazer volta para a versão anterior do medley.\n"
     "/novo começa um medley do zero."
 )
 
@@ -95,13 +96,34 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 return
 
         await status.delete()
-        await msg.reply_text(result.reply)
-        if result.mp3:
-            with open(result.mp3, "rb") as f:
-                await msg.reply_audio(
-                    f, filename=result.mp3.name, title=f"Medley v{session.version}",
-                    caption=result.timeline[:1000],
-                )
+        await _send_result(msg, result, session)
+
+
+async def _send_result(msg, result, session: Session) -> None:
+    await msg.reply_text(result.reply)
+    if result.mp3:
+        with open(result.mp3, "rb") as f:
+            await msg.reply_audio(
+                f, filename=result.mp3.name, title=f"Medley v{session.version}",
+                caption=result.timeline[:1000],
+            )
+
+
+async def desfazer(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update):
+        return
+    chat_id = update.effective_chat.id
+    async with locks.setdefault(chat_id, asyncio.Lock()):
+        session = _session(chat_id)
+        status = await update.message.reply_text("Voltando para a versão anterior…")
+        try:
+            result = await asyncio.to_thread(undo, session, DATA_DIR)
+        except Exception:
+            log.exception("erro no /desfazer")
+            await status.edit_text("Ops, não consegui desfazer. Tenta de novo?")
+            return
+        await status.delete()
+        await _send_result(update.message, result, session)
 
 
 def _startup_checks() -> None:
@@ -142,6 +164,7 @@ def main() -> None:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler(["start", "ajuda"], start))
     app.add_handler(CommandHandler("novo", novo))
+    app.add_handler(CommandHandler("desfazer", desfazer))
     app.add_handler(MessageHandler(
         (filters.TEXT & ~filters.COMMAND) | filters.AUDIO | filters.VOICE | filters.Document.AUDIO,
         on_message,

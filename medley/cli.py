@@ -21,7 +21,7 @@ def cmd_chat(args) -> None:
     session = Session.load(DATA_DIR / "chats" / "terminal.json")
     if args.novo:
         session.reset()
-    print("Converse como ela faria. Para adicionar um arquivo local: /arquivo caminho.mp3   |   /novo   |   /sair")
+    print("Converse como ela faria. Para adicionar um arquivo local: /arquivo caminho.mp3   |   /desfazer   |   /novo   |   /sair")
     while True:
         try:
             text = input("\nvocê> ").strip()
@@ -29,6 +29,14 @@ def cmd_chat(args) -> None:
             break
         if text in ("/sair", "/exit"):
             break
+        if text == "/desfazer":
+            from .core import undo
+
+            r = undo(session, DATA_DIR)
+            print(f"\nbot> {r.reply}")
+            if r.mp3:
+                print(f"\n{r.timeline}\n🎧 {r.mp3}")
+            continue
         if text == "/novo":
             session.reset()
             print("(começando do zero)")

@@ -46,6 +46,10 @@ transição", "começa 5 segundos antes" etc., e o bot gera uma nova versão.
 ```bash
 python -m medley.bot
 ```
+Comandos do bot: `/desfazer` volta para a versão anterior do medley (pode usar várias vezes),
+`/novo` começa do zero e `/ajuda` mostra exemplos. Ela também pode pedir por mensagem: "volta como
+estava antes".
+
 Mande `/start` para o bot. Ele mostra o seu ID; coloque os IDs (o seu e o dela) em
 `ALLOWED_USER_IDS` no `.env` e reinicie o bot, para ninguém mais gastar seus créditos.
 
@@ -160,6 +164,15 @@ A IA não ouve o áudio. Antes de cada pedido ela recebe, de cada música:
 
 Com isso, pedidos como "começa no refrão" ou "corta depois de 'ressuscita-me'" caem no lugar
 certo, e a linha do tempo mostra a frase com que cada trecho começa.
+
+## Conferência do plano
+
+Antes de gerar o áudio, o código confere o plano da IA (`medley/validate.py`):
+
+- erros pequenos são corrigidos na hora (ex.: "até 9:99" numa música de 4 minutos vira "até o fim");
+- erros de verdade (faixa que não existe, início depois do fim, mudança de tom exagerada,
+  velocidade absurda) voltam para a IA corrigir, até 2 vezes, sem a usuária ver. Se mesmo assim
+  não der, o bot pede para ela explicar de outro jeito, em vez de gerar um áudio quebrado.
 
 ## Limitações conhecidas
 

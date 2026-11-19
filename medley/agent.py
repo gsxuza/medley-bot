@@ -52,7 +52,12 @@ isso deixa a voz artificial. Só mude quando ela pedir explicitamente.
 - Se os BPMs de duas faixas seguidas diferem mais de ~8%, um crossfade longo fica embolado: prefira \
 crossfade de 1 a 2 s ou "fade". Pausa dramática entre músicas = "cut" ou "fade" com gap_before.
 - Para "versão de ensaio mais lenta", mude só speed (ex.: 0.85). Para subir o tom, use semitones.
-- Ao alterar algo, devolva o plano inteiro com a mudança, mantendo o resto igual.
+- Ao alterar algo, parta do PLANO ATUAL e devolva o plano inteiro com a mudança, mantendo todo o resto \
+exatamente igual (mesmos tempos, transições, tom e velocidade). Mude só o que ela pediu.
+- Se ela pedir para voltar como estava antes, use o PLANO ANTERIOR. Ela também pode usar o comando \
+/desfazer, que faz isso sozinho; você pode lembrar dele quando ela não gostar de uma mudança.
+- Mensagens marcadas como "[conferência automática]" vêm do programa, não dela: corrija o que for apontado \
+e não fale da conferência na resposta.
 - Use action "render" quando o plano mudou e deve ser gerado; use "none" quando for só conversa, quando \
 faltar informação essencial (ex.: ainda não há faixas) ou para tirar uma dúvida real antes de gerar. \
 Se der para fazer uma boa tentativa, gere em vez de perguntar.
@@ -101,16 +106,23 @@ def _client():
     return anthropic.Anthropic()
 
 
-def _build_messages(session: Session, user_text: str) -> list[dict]:
+def _build_messages(session: Session, user_text: str, followups: list[dict] = ()) -> list[dict]:
     messages = [{"role": m["role"], "content": m["content"]} for m in session.history[-MAX_HISTORY:]]
-    # As APIs exigem que a conversa comece com a usuária
-    while messages and messages[0]["role"] != "user":
-        messages.pop(0)
     messages.append({
         "role": "user",
         "content": f"<estado>\n{session.state_text()}\n</estado>\n\n{user_text}",
     })
-    return messages
+    messages += list(followups)
+    # As APIs exigem que a conversa comece com a usuária e alterne usuária/assistente
+    while messages and messages[0]["role"] != "user":
+        messages.pop(0)
+    merged: list[dict] = []
+    for m in messages:
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1] = {"role": m["role"], "content": merged[-1]["content"] + "\n\n" + m["content"]}
+        else:
+            merged.append(dict(m))
+    return merged
 
 
 def _respond_claude(messages: list[dict]) -> AgentResponse:
@@ -206,10 +218,11 @@ def _respond_gemini(messages: list[dict]) -> AgentResponse:
         raise AgentError(f"resposta inválida do Gemini ({reason})") from e
 
 
-def respond(session: Session, user_text: str) -> AgentResponse:
-    messages = _build_messages(session, user_text)
-    result = _respond_gemini(messages) if provider() == "gemini" else _respond_claude(messages)
+def respond(session: Session, user_text: str, followups: list[dict] = ()) -> AgentResponse:
+    """Pede uma resposta à IA. Não altera o histórico: quem decide o que guardar é o core.
 
-    session.history.append({"role": "user", "content": user_text})
-    session.history.append({"role": "assistant", "content": result.reply})
-    return result
+    followups: mensagens extras depois do pedido (ex.: a resposta anterior da IA e os problemas que a
+    conferência automática achou nela), para a IA corrigir o próprio plano.
+    """
+    messages = _build_messages(session, user_text, followups)
+    return _respond_gemini(messages) if provider() == "gemini" else _respond_claude(messages)

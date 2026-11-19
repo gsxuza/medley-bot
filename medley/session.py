@@ -9,15 +9,36 @@ from .plan import Plan
 
 URL_RE = re.compile(r"https?://(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)/\S+")
 MAX_HISTORY = 30  # mensagens (usuária + bot) mantidas como contexto
+MAX_PLANS = 20    # versões guardadas para o /desfazer
 
 
 @dataclass
 class Session:
     path: Path
     tracks: dict[str, TrackInfo] = field(default_factory=dict)
-    plan: Plan | None = None
+    plans: list[Plan] = field(default_factory=list)  # versões do medley, a última é a atual
     history: list[dict] = field(default_factory=list)
-    version: int = 0
+    version: int = 0  # número da última versão gerada (só cresce, dá nome aos arquivos)
+
+    @property
+    def plan(self) -> Plan | None:
+        return self.plans[-1] if self.plans else None
+
+    @property
+    def previous_plan(self) -> Plan | None:
+        return self.plans[-2] if len(self.plans) >= 2 else None
+
+    def push_plan(self, plan: Plan) -> None:
+        self.plans = (self.plans + [plan])[-MAX_PLANS:]
+        self.version += 1
+
+    def undo(self) -> Plan | None:
+        """Descarta a versão atual. Retorna o plano que voltou a valer (None se não há para onde voltar)."""
+        if len(self.plans) < 2:
+            return None
+        self.plans.pop()
+        self.version += 1
+        return self.plans[-1]
 
     @classmethod
     def load(cls, path: Path) -> "Session":
@@ -30,7 +51,10 @@ class Session:
                 text = raw.decode("cp1252")
             d = json.loads(text)
             s.tracks = {k: TrackInfo(**v) for k, v in d["tracks"].items()}
-            s.plan = Plan.model_validate(d["plan"]) if d.get("plan") else None
+            if d.get("plans"):
+                s.plans = [Plan.model_validate(p) for p in d["plans"]]
+            elif d.get("plan"):  # conversas salvas antes do /desfazer
+                s.plans = [Plan.model_validate(d["plan"])]
             s.history = d.get("history", [])
             s.version = d.get("version", 0)
         return s
@@ -39,13 +63,13 @@ class Session:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({
             "tracks": {k: track_to_dict(v) for k, v in self.tracks.items()},
-            "plan": self.plan.model_dump() if self.plan else None,
+            "plans": [p.model_dump() for p in self.plans[-MAX_PLANS:]],
             "history": self.history[-MAX_HISTORY:],
             "version": self.version,
         }, ensure_ascii=False), encoding="utf-8")
 
     def reset(self) -> None:
-        self.tracks, self.plan, self.history, self.version = {}, None, [], 0
+        self.tracks, self.plans, self.history, self.version = {}, [], [], 0
         self.save()
 
     def _next_id(self) -> str:
@@ -92,6 +116,9 @@ class Session:
     def state_text(self) -> str:
         parts = ["FAIXAS DISPONÍVEIS:"]
         parts += [t.summary() for t in self.tracks.values()] or ["(nenhuma ainda)"]
-        parts.append("\nPLANO ATUAL:")
+        parts.append(f"\nPLANO ATUAL (versão {self.version}, a que ela está ouvindo):")
         parts.append(self.plan.model_dump_json(indent=1) if self.plan else "(nenhum ainda)")
+        if self.previous_plan:
+            parts.append("\nPLANO ANTERIOR (use se ela pedir para voltar como estava antes):")
+            parts.append(self.previous_plan.model_dump_json(indent=1))
         return "\n".join(parts)
