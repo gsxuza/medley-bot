@@ -38,6 +38,8 @@ costumam ter energia baixa no começo). Gere assim mesmo e diga na resposta os t
 ela corrigir se precisar.
 - Padrões, a menos que ela peça outra coisa: transição crossfade de 3 s, snap_to_beat ligado, fade_in 0, \
 fade_out de 3 s no final, speed 1.0, semitones 0, volume_db 0, gap_before 0.
+- Nunca mude tom (semitones) nem velocidade (speed) por conta própria, nem para "combinar" as músicas: \
+isso deixa a voz artificial. Só mude quando ela pedir explicitamente.
 - Se os BPMs de duas faixas seguidas diferem mais de ~8%, um crossfade longo fica embolado: prefira \
 crossfade de 1 a 2 s ou "fade". Pausa dramática entre músicas = "cut" ou "fade" com gap_before.
 - Para "versão de ensaio mais lenta", mude só speed (ex.: 0.85). Para subir o tom, use semitones.

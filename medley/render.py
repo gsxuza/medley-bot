@@ -128,6 +128,7 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             "n": i + 1, "track": seg.track, "title": tr.title,
             "src_start": start, "src_end": end, "out_start": pos,
             "transition": trans if i > 0 else "início",
+            "semitones": seg.semitones,
         })
 
     n = min(int(plan.fade_out * SR), len(out))
@@ -153,7 +154,7 @@ def render(plan: Plan, tracks: dict[str, TrackInfo], out_mp3: Path) -> list[dict
             check=True,
         )
 
-    timeline.append({"total": total})
+    timeline.append({"total": total, "speed": speed})
     return timeline
 
 
@@ -161,10 +162,12 @@ def describe(timeline: list[dict]) -> str:
     lines = []
     for item in timeline:
         if "total" in item:
-            lines.append(f"Duração total: {fmt_time(item['total'])}")
+            extra = f" (velocidade {item['speed']:.0%})" if abs(item.get("speed", 1) - 1) > 1e-3 else ""
+            lines.append(f"Duração total: {fmt_time(item['total'])}{extra}")
             continue
         lines.append(
             f"{fmt_time(item['out_start'])} ▸ {item['track']} \"{item['title']}\" "
             f"({fmt_time(item['src_start'])}–{fmt_time(item['src_end'])}) [{item['transition']}]"
+            + (f" [tom {item['semitones']:+d}]" if item.get("semitones") else "")
         )
     return "\n".join(lines)
