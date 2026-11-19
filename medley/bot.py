@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -130,7 +131,12 @@ def _cleanup_loop() -> None:
 
 
 def main() -> None:
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    if not re.fullmatch(r"\d+:[\w-]{20,}", token):
+        raise SystemExit(
+            "TELEGRAM_BOT_TOKEN vazio ou incompleto no .env. Ele deve ter o formato "
+            "123456789:AAH... (copie de novo a mensagem do @BotFather)."
+        )
     _startup_checks()
     threading.Thread(target=_cleanup_loop, daemon=True).start()
     app = Application.builder().token(token).build()
